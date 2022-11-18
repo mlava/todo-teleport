@@ -70,28 +70,17 @@ const prompt = ({
         )
     });
 
-var myEventHandler = undefined;
-
 export default {
     onload: ({ extensionAPI }) => {
         window.roamAlphaAPI.ui.commandPalette.addCommand({
             label: "Teleport TODOs",
             callback: () => teleport(),
         });
-
-        myEventHandler = function (e) {
-            if (e.code === 'KeyT' && e.altKey && e.shiftKey) {
-                e.preventDefault();
-                getSelectionText();
-            }
-        }
-        window.addEventListener('keydown', myEventHandler, false);
     },
     onunload: () => {
         window.roamAlphaAPI.ui.commandPalette.removeCommand({
             label: 'Teleport TODOs'
         });
-        window.removeEventListener('keydown', myEventHandler, false);
     }
 }
 
