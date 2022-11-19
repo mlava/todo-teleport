@@ -147,6 +147,24 @@ async function teleport() {
                     block: { uid: uidArray[j].uid.toString() }
                 });
         }
+        window.dispatchEvent(new KeyboardEvent('keydown', {
+            key: "m",
+            keyCode: 77,
+            code: "KeyM",
+            which: 77,
+            shiftKey: false,
+            ctrlKey: true,
+            metaKey: false
+        }));
+        window.dispatchEvent(new KeyboardEvent('keyup', {
+            key: "m",
+            keyCode: 77,
+            code: "KeyM",
+            which: 77,
+            shiftKey: false,
+            ctrlKey: true,
+            metaKey: false
+        }));
     }
 }
 
