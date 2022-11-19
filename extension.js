@@ -63,6 +63,10 @@ const prompt = ({
                     onClose: () => {
                         window.ReactDOM.unmountComponentAtNode(parent);
                         parent.remove();
+                    },
+                    "keyboard": {
+                        "displayValue": false,
+                        "value": false
                     }
                 }
             ),
@@ -76,10 +80,18 @@ export default {
             label: "Teleport TODOs",
             callback: () => teleport(),
         });
+        window.roamAlphaAPI.ui.blockContextMenu.addCommand({
+            label: "Teleport TODOs",
+            callback: () => teleport(),
+        });
     },
     onunload: () => {
         window.roamAlphaAPI.ui.commandPalette.removeCommand({
             label: 'Teleport TODOs'
+        });
+        window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
+            label: "Teleport TODOs",
+            callback: () => teleport(),
         });
     }
 }
