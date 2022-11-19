@@ -22,7 +22,7 @@ const FormDialog = ({
     )
     return window.React.createElement(
         window.Blueprint.Core.Dialog,
-        { isOpen: true, onClose: onCancel, title, },
+        { isOpen: true, enforceFocus: false, onClose: onCancel, title, },
         window.React.createElement(
             "div",
             { className: window.Blueprint.Core.Classes.DIALOG_BODY },
@@ -82,7 +82,7 @@ export default {
         });
         window.roamAlphaAPI.ui.blockContextMenu.addCommand({
             label: "Teleport TODOs",
-            callback: () => teleport(),
+            callback: (e) => teleport(e),
         });
     },
     onunload: () => {
@@ -91,21 +91,20 @@ export default {
         });
         window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
             label: "Teleport TODOs",
-            callback: () => teleport(),
+            callback: (e) => teleport(e),
         });
     }
 }
 
-async function teleport() {
+async function teleport(e) {
     let uidArray = [];
     const regex = /(\{\{\[\[TODO\]\]\}\})/;
     let uids = await roamAlphaAPI.ui.individualMultiselect.getSelectedUids(); // get multi-selection uids
     if (uids.length === 0) {
-        let singleBlock = await window.roamAlphaAPI.ui.getFocusedBlock()?.["block-uid"];
-        var results = await window.roamAlphaAPI.data.pull("[:block/string]", [":block/uid", singleBlock]);
-        var refString = results[":block/string"];
-        if (regex.test(refString)) { //there's a TODO in this single block
-            uidArray.push({ singleBlock })
+        let uid = e["block-uid"].toString();
+        var text = e["block-string"].toString();
+        if (regex.test(text)) { //there's a TODO in this single block
+            uidArray.push({ uid })
         } else {
             alert("You can't teleport without selecting blocks")
             return;
