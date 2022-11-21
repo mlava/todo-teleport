@@ -126,7 +126,7 @@ async function teleport(e) {
         }
     }
 
-    if (uidArray.length > 0) {
+    if (uidArray.length > 0) { // there are blocks to move
         var selectedDate = await prompt({
             title: "To which date?",
         });
@@ -145,14 +145,14 @@ async function teleport(e) {
             await window.roamAlphaAPI.createPage({ page: { title: titleDate, uid: newDate } });
         }
 
-        for (var j = 0; j < uidArray.length; j++) {
+        for (var j = 0; j < uidArray.length; j++) { // iterate and move block array to new date
             await window.roamAlphaAPI.moveBlock(
                 {
                     location: { "parent-uid": newDate, order: j },
                     block: { uid: uidArray[j].uid.toString() }
                 });
         }
-        if (uids.length !== 0) {
+        if (uids.length !== 0) { // was using multiselect mode, so turn it off
             window.dispatchEvent(new KeyboardEvent('keydown', {
                 key: "m",
                 keyCode: 77,
