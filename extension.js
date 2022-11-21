@@ -90,8 +90,7 @@ export default {
             label: 'Teleport TODOs'
         });
         window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
-            label: "Teleport TODOs",
-            callback: (e) => teleport(e),
+            label: "Teleport TODOs"
         });
     }
 }
@@ -100,16 +99,23 @@ async function teleport(e) {
     let uidArray = [];
     const regex = /(\{\{\[\[TODO\]\]\}\})/;
     let uids = await roamAlphaAPI.ui.individualMultiselect.getSelectedUids(); // get multi-selection uids
-    if (uids.length === 0) {
-        let uid = e["block-uid"].toString();
-        var text = e["block-string"].toString();
+    if (uids.length === 0) { // not using multiselect mode
+        var uid, text;
+        if (e) { // bullet right-click 
+            uid = e["block-uid"].toString();
+            text = e["block-string"].toString();
+        } else { // command palette
+            uid = await window.roamAlphaAPI.ui.getFocusedBlock()?.["block-uid"];
+            var texta = await window.roamAlphaAPI.data.pull("[:block/string]", [":block/uid", uid]);
+            text = texta[":block/string"];
+        }
         if (regex.test(text)) { //there's a TODO in this single block
             uidArray.push({ uid })
         } else {
             alert("You can't teleport without selecting blocks")
             return;
         }
-    } else {
+    } else { // multi-select mode, iterate blocks
         for (var i = 0; i < uids.length; i++) {
             var results = await window.roamAlphaAPI.data.pull("[:block/string]", [":block/uid", uids[i]]);
             var refString = results[":block/string"];
@@ -146,24 +152,26 @@ async function teleport(e) {
                     block: { uid: uidArray[j].uid.toString() }
                 });
         }
-        window.dispatchEvent(new KeyboardEvent('keydown', {
-            key: "m",
-            keyCode: 77,
-            code: "KeyM",
-            which: 77,
-            shiftKey: false,
-            ctrlKey: true,
-            metaKey: false
-        }));
-        window.dispatchEvent(new KeyboardEvent('keyup', {
-            key: "m",
-            keyCode: 77,
-            code: "KeyM",
-            which: 77,
-            shiftKey: false,
-            ctrlKey: true,
-            metaKey: false
-        }));
+        if (uids.length !== 0) {
+            window.dispatchEvent(new KeyboardEvent('keydown', {
+                key: "m",
+                keyCode: 77,
+                code: "KeyM",
+                which: 77,
+                shiftKey: false,
+                ctrlKey: true,
+                metaKey: false
+            }));
+            window.dispatchEvent(new KeyboardEvent('keyup', {
+                key: "m",
+                keyCode: 77,
+                code: "KeyM",
+                which: 77,
+                shiftKey: false,
+                ctrlKey: true,
+                metaKey: false
+            }));
+        }
     }
 }
 
