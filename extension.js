@@ -1,3 +1,6 @@
+const MAX = new Date(2024, 12, 31);
+const MIN = new Date(2021, 1, 1);
+
 const FormDialog = ({
     onSubmit,
     title,
@@ -33,6 +36,8 @@ const FormDialog = ({
                     window.Blueprint.DateTime.DatePicker,
                     {
                         onChange: onChange,
+                        maxDate: MAX,
+                        minDate: MIN,
                         highlightCurrentDay: true,
                         popoverProps: {
                             minimal: true,
