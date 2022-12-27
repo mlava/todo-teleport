@@ -1,5 +1,7 @@
-const MAX = new Date(2024, 12, 31);
-const MIN = new Date(2021, 1, 1);
+const date = new Date();
+date.setFullYear(date.getFullYear() + 6);
+const MAX = new Date(date);
+const MIN = new Date(2019, 0, 1);
 
 const FormDialog = ({
     onSubmit,
