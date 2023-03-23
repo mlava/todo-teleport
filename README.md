@@ -1,5 +1,8 @@
 If you ever end your day with some of your {{[[TODO]]}} blocks in Roam still not {{[[DONE]]}}, this extension provides an easy way to send them to another daily note page to deal with then.
 
+**New:**
+- compatible with Roam Research Hotkeys
+
 ![todo-teleport](https://user-images.githubusercontent.com/6857790/202629194-29000be6-49c4-4657-b730-78056c29b8b6.gif)
 
 Using the Roam Research multi-block select (CTRL-m) choose the TODOs you want to teleport. If you only want to send one TODO to the future, feel free to skip this step!
