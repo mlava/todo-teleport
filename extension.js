@@ -83,7 +83,7 @@ const prompt = ({
 
 export default {
     onload: ({ extensionAPI }) => {
-        window.roamAlphaAPI.ui.commandPalette.addCommand({
+        extensionAPI.ui.commandPalette.addCommand({
             label: "Teleport TODOs",
             callback: () => teleport(),
         });
@@ -93,9 +93,6 @@ export default {
         });
     },
     onunload: () => {
-        window.roamAlphaAPI.ui.commandPalette.removeCommand({
-            label: 'Teleport TODOs'
-        });
         window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
             label: "Teleport TODOs"
         });
