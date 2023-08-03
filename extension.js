@@ -27,7 +27,7 @@ const FormDialog = ({
     )
     return window.React.createElement(
         window.Blueprint.Core.Dialog,
-        { isOpen: true, enforceFocus: false, onClose: onCancel, title, },
+        { isOpen: true, autoFocus: false, onClose: onCancel, title, },
         window.React.createElement(
             "div",
             { className: window.Blueprint.Core.Classes.DIALOG_BODY },
