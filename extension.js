@@ -85,47 +85,76 @@ export default {
     onload: ({ extensionAPI }) => {
         extensionAPI.ui.commandPalette.addCommand({
             label: "Teleport TODOs",
-            callback: () => teleport(),
+            callback: () => teleport(null, false),
         });
         window.roamAlphaAPI.ui.blockContextMenu.addCommand({
             label: "Teleport TODOs",
-            callback: (e) => teleport(e),
+            callback: (e) => teleport(e, false),
+        });
+        extensionAPI.ui.commandPalette.addCommand({
+            label: "Teleport TODOs and leave blockref behind",
+            callback: () => teleport(null, true),
+        });
+        window.roamAlphaAPI.ui.blockContextMenu.addCommand({
+            label: "Teleport TODOs and leave blockref behind",
+            callback: (e) => teleport(e, true),
         });
     },
     onunload: () => {
         window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
             label: "Teleport TODOs"
         });
+        window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
+            label: "Teleport TODOs and leave blockref behind"
+        });
     }
 }
 
-async function teleport(e) {
+async function teleport(e, blockref) {
     let uidArray = [];
     const regex = /(\{\{\[\[TODO\]\]\}\})/;
     let uids = await roamAlphaAPI.ui.individualMultiselect.getSelectedUids(); // get multi-selection uids
+    var uid, text, parent, parents, order;
     if (uids.length === 0) { // not using multiselect mode
-        var uid, text;
-        if (e) { // bullet right-click 
+        if (e) { // bullet right-click
             uid = e["block-uid"].toString();
             text = e["block-string"].toString();
         } else { // command palette
             uid = await window.roamAlphaAPI.ui.getFocusedBlock()?.["block-uid"];
-            var texta = await window.roamAlphaAPI.data.pull("[:block/string]", [":block/uid", uid]);
-            text = texta[":block/string"];
+        }
+        var texta = await window.roamAlphaAPI.data.pull("[:block/string :block/uid :block/order {:block/parents ...} {:block/children ...}]", [":block/uid", uid]);
+        text = texta[":block/string"];
+        parents = texta[":block/parents"];
+        order = texta[":block/order"];
+        for (var i = 0; i < parents.length; i++) {
+            for (var k = 0; k < parents[i][":block/children"].length; k++) {
+                if (parents[i][":block/children"][k][":block/uid"] == texta[":block/uid"]) {
+                    parent = parents[i][":block/uid"];
+                }
+            }
         }
         if (regex.test(text)) { //there's a TODO in this single block
-            uidArray.push({ uid })
+            uidArray.push({ uid, parent, order });
         } else {
             alert("You can't teleport without selecting blocks")
             return;
         }
     } else { // multi-select mode, iterate blocks
         for (var i = 0; i < uids.length; i++) {
-            var results = await window.roamAlphaAPI.data.pull("[:block/string]", [":block/uid", uids[i]]);
+            var results = await window.roamAlphaAPI.data.pull("[:block/string :block/uid :block/order {:block/parents ...} {:block/children ...}]", [":block/uid", uids[i]]);
             var refString = results[":block/string"];
+            order = results[":block/order"];
+            parents = results[":block/parents"];
+            for (var l = 0; l < parents.length; l++) {
+                for (var k = 0; k < parents[l][":block/children"].length; k++) {
+                    if (parents[l][":block/children"][k][":block/uid"] == results[":block/uid"]) {
+                        parent = parents[l][":block/uid"];
+                    }
+                }
+            }
             if (regex.test(refString)) { //there's a TODO in this single block
                 let uid = uids[i].toString();
-                uidArray.push({ uid })
+                uidArray.push({ uid, parent, order })
             }
         }
     }
@@ -155,6 +184,14 @@ async function teleport(e) {
                     location: { "parent-uid": newDate, order: j },
                     block: { uid: uidArray[j].uid.toString() }
                 });
+            if (blockref) {
+                await window.roamAlphaAPI.createBlock(
+                    {"location": 
+                        {"parent-uid": parent, 
+                         "order": order}, 
+                     "block": 
+                        {"string": "(("+uidArray[j].uid.toString()+"))"}})
+            }
         }
         if (uids.length !== 0) { // was using multiselect mode, so turn it off
             window.dispatchEvent(new KeyboardEvent('keydown', {
