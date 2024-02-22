@@ -1,7 +1,8 @@
 If you ever end your day with some of your {{[[TODO]]}} blocks in Roam still not {{[[DONE]]}}, this extension provides an easy way to send them to another daily note page to deal with then.
 
 **New:**
-- option to leave behind a blockref after teleporting a todo to another date (a separate option appears both in block context menu and command palette, and you could set a Roam Research hotkey to this option if that is your usual preference)
+- option to leave behind a blockref after teleporting a todo to another date
+  - a separate option appears both in block context menu and command palette, and you could set a Roam Research hotkey to this option if that is your usual preference
 - compatible with Roam Research Hotkeys
 
 ![todo-teleport](https://user-images.githubusercontent.com/6857790/202629194-29000be6-49c4-4657-b730-78056c29b8b6.gif)
