@@ -85,19 +85,27 @@ export default {
     onload: ({ extensionAPI }) => {
         extensionAPI.ui.commandPalette.addCommand({
             label: "Teleport TODOs",
-            callback: () => teleport(null, false),
+            callback: () => teleport(null, false, false),
         });
         window.roamAlphaAPI.ui.blockContextMenu.addCommand({
             label: "Teleport TODOs",
-            callback: (e) => teleport(e, false),
+            callback: (e) => teleport(e, false, false),
         });
         extensionAPI.ui.commandPalette.addCommand({
             label: "Teleport TODOs and leave blockref behind",
-            callback: () => teleport(null, true),
+            callback: () => teleport(null, true, false),
         });
         window.roamAlphaAPI.ui.blockContextMenu.addCommand({
             label: "Teleport TODOs and leave blockref behind",
-            callback: (e) => teleport(e, true),
+            callback: (e) => teleport(e, true, false),
+        });
+        extensionAPI.ui.commandPalette.addCommand({
+            label: "Teleport TODO date tag",
+            callback: () => teleport(null, false, true),
+        });
+        window.roamAlphaAPI.ui.blockContextMenu.addCommand({
+            label: "Teleport TODO date tag",
+            callback: (e) => teleport(e, false, true),
         });
     },
     onunload: () => {
@@ -107,14 +115,18 @@ export default {
         window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
             label: "Teleport TODOs and leave blockref behind"
         });
+        window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
+            label: "Teleport TODO date tag"
+        });
     }
 }
 
-async function teleport(e, blockref) {
+async function teleport(e, blockref, tag) {
     let uidArray = [];
     const regex = /(\{\{\[\[TODO\]\]\}\})/;
     let uids = await roamAlphaAPI.ui.individualMultiselect.getSelectedUids(); // get multi-selection uids
     var uid, text, parent, parents, order;
+
     if (uids.length === 0) { // not using multiselect mode
         if (e) { // bullet right-click
             uid = e["block-uid"].toString();
@@ -126,6 +138,7 @@ async function teleport(e, blockref) {
         text = texta[":block/string"];
         parents = texta[":block/parents"];
         order = texta[":block/order"];
+        
         for (var i = 0; i < parents.length; i++) {
             for (var k = 0; k < parents[i][":block/children"].length; k++) {
                 if (parents[i][":block/children"][k][":block/uid"] == texta[":block/uid"]) {
@@ -134,7 +147,7 @@ async function teleport(e, blockref) {
             }
         }
         if (regex.test(text)) { //there's a TODO in this single block
-            uidArray.push({ uid, parent, order });
+            uidArray.push({ uid, parent, order, text });
         } else {
             alert("You can't teleport without selecting blocks")
             return;
@@ -143,6 +156,7 @@ async function teleport(e, blockref) {
         for (var i = 0; i < uids.length; i++) {
             var results = await window.roamAlphaAPI.data.pull("[:block/string :block/uid :block/order {:block/parents ...} {:block/children ...}]", [":block/uid", uids[i]]);
             var refString = results[":block/string"];
+            text = results[":block/string"];
             order = results[":block/order"];
             parents = results[":block/parents"];
             for (var l = 0; l < parents.length; l++) {
@@ -154,7 +168,7 @@ async function teleport(e, blockref) {
             }
             if (regex.test(refString)) { //there's a TODO in this single block
                 let uid = uids[i].toString();
-                uidArray.push({ uid, parent, order })
+                uidArray.push({ uid, parent, order, text })
             }
         }
     }
@@ -171,6 +185,7 @@ async function teleport(e, blockref) {
         var mm = String(selectedDate.getMonth() + 1).padStart(2, '0');
         let newDate = mm + "-" + dd + "-" + year;
         var titleDate = convertToRoamDate(newDate);
+        console.info(titleDate);
         var page = await window.roamAlphaAPI.q(`[:find (pull ?e [:node/title]) :where [?e :block/uid "${newDate}"]]`);
         if (page.length > 0 && page[0][0] != null) {
             // there's already a page with this date
@@ -178,21 +193,44 @@ async function teleport(e, blockref) {
             await window.roamAlphaAPI.createPage({ page: { title: titleDate, uid: newDate } });
         }
 
-        for (var j = 0; j < uidArray.length; j++) { // iterate and move block array to new date
-            await window.roamAlphaAPI.moveBlock(
-                {
-                    location: { "parent-uid": newDate, order: j },
-                    block: { uid: uidArray[j].uid.toString() }
-                });
-            if (blockref) {
-                await window.roamAlphaAPI.createBlock(
-                    {"location": 
-                        {"parent-uid": parent, 
-                         "order": order}, 
-                     "block": 
-                        {"string": "(("+uidArray[j].uid.toString()+"))"}})
+        if (tag) {
+            for (var j = 0; j < uidArray.length; j++) { // iterate and change date tag
+                const regex = /\[\[(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{1,2}(?:st|nd|rd|th),\s\d{4}\]\]/;
+                if (regex.test(uidArray[j].text)) {
+                    var newString = "[[" + titleDate + "]]";
+                    var replacedString = uidArray[j].text.toString();
+                    replacedString = replacedString.replace(regex, newString);
+                    
+                    await sleep(100);
+                    await window.roamAlphaAPI.updateBlock(
+                        {
+                            "block":
+                                { "uid": uidArray[j].uid, "string": replacedString.toString() }
+                        });
+                }
+            }
+        } else {
+            for (var j = 0; j < uidArray.length; j++) { // iterate and move block array to new date
+                await window.roamAlphaAPI.moveBlock(
+                    {
+                        location: { "parent-uid": newDate, order: j },
+                        block: { uid: uidArray[j].uid.toString() }
+                    });
+                if (blockref) {
+                    await window.roamAlphaAPI.createBlock(
+                        {
+                            "location":
+                            {
+                                "parent-uid": parent,
+                                "order": order
+                            },
+                            "block":
+                                { "string": "((" + uidArray[j].uid.toString() + "))" }
+                        });
+                }
             }
         }
+
         if (uids.length !== 0) { // was using multiselect mode, so turn it off
             window.dispatchEvent(new KeyboardEvent('keydown', {
                 key: "m",
@@ -227,4 +265,8 @@ function convertToRoamDate(dateString) {
         ? "th"
         : ["st", "nd", "rd"][day % 10 - 1];
     return "" + monthName + " " + day + suffix + ", " + year + "";
+}
+
+async function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
