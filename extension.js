@@ -185,7 +185,6 @@ async function teleport(e, blockref, tag) {
         var mm = String(selectedDate.getMonth() + 1).padStart(2, '0');
         let newDate = mm + "-" + dd + "-" + year;
         var titleDate = convertToRoamDate(newDate);
-        console.info(titleDate);
         var page = await window.roamAlphaAPI.q(`[:find (pull ?e [:node/title]) :where [?e :block/uid "${newDate}"]]`);
         if (page.length > 0 && page[0][0] != null) {
             // there's already a page with this date
@@ -221,8 +220,8 @@ async function teleport(e, blockref, tag) {
                         {
                             "location":
                             {
-                                "parent-uid": parent,
-                                "order": order
+                                "parent-uid": uidArray[j].parent,
+                                "order": uidArray[j].order
                             },
                             "block":
                                 { "string": "((" + uidArray[j].uid.toString() + "))" }
