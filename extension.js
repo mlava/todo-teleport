@@ -1,4 +1,4 @@
-// todo-teleport — extension.js (deferred pulls)
+// todo-teleport — extension.js (stable dialog + prompt-first + BP DatePicker fix)
 
 // ---- Date limits for DatePicker ----
 const date = new Date();
@@ -22,10 +22,11 @@ const MIN = new Date(2019, 0, 1);
 // ---- React Dialog ----
 const FormDialog = ({ onSubmit, title, onClose }) => {
   const today = new Date();
-  const [scheduleDate] = window.React.useState(today);
 
   const onChange = window.React.useCallback(
     (picked) => {
+      // Clicking an already-selected day can emit null if clearing is allowed.
+      if (!picked) return; // ignore "clear" events
       onSubmit(picked);
       onClose();
     },
@@ -33,7 +34,7 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
   );
 
   const onCancel = window.React.useCallback(() => {
-    onSubmit(""); // sentinel
+    onSubmit(""); // sentinel for cancel
     onClose();
   }, [onSubmit, onClose]);
 
@@ -62,14 +63,20 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
           minDate: MIN,
           highlightCurrentDay: true,
           popoverProps: { minimal: true, captureDismiss: true },
-          value: scheduleDate,
+          // IMPORTANT: use uncontrolled defaultValue so the first click on "today" counts,
+          // and prevent clearing to null by clicking the selected day.
+          defaultValue: today,
+          canClearSelection: false,
+          // (Alternative if you prefer *no* preselection):
+          // initialMonth: today,
+          // defaultValue: undefined,
         })
       )
     )
   );
 };
 
-// ---- Prompt helper (singleton) ----
+// ---- Prompt helper (singleton, never gets stuck) ----
 const prompt = ({ title }) =>
   new Promise((resolve) => {
     // Prevent multiple prompts at once
@@ -82,21 +89,31 @@ const prompt = ({ title }) =>
 
     const safeClose = () => {
       try {
-        window.ReactDOM.unmountComponentAtNode(parent);
+        if (parent.isConnected) {
+          try {
+            window.ReactDOM.unmountComponentAtNode(parent);
+          } catch (_) {}
+          parent.remove();
+        }
       } finally {
-        parent.remove();
         window.__teleportPromptOpen = false;
       }
     };
 
-    window.ReactDOM.render(
-      window.React.createElement(FormDialog, {
-        onSubmit: resolve,
-        title,
-        onClose: safeClose,
-      }),
-      parent
-    );
+    try {
+      window.ReactDOM.render(
+        window.React.createElement(FormDialog, {
+          onSubmit: resolve,
+          title,
+          onClose: safeClose,
+        }),
+        parent
+      );
+    } catch (err) {
+      // If render fails for any reason, ensure we don't leave the guard stuck.
+      console.error("[todo-teleport] Failed to render dialog:", err);
+      safeClose();
+    }
   });
 
 // ---- Roam Depot entry points ----
@@ -142,11 +159,11 @@ export default {
   },
 };
 
-// ---- Main behaviour (defer heavy pulls until after date pick) ----
+// ---- Main behaviour (prompt-first; then heavy pulls) ----
 async function teleport(e, blockref, tag) {
   const regexTODO = /(\{\{\[\[TODO\]\]\}\})/i; // case-insensitive
 
-  // 1) Collect candidate UIDs with minimal work (no pulls yet)
+  // 1) Collect candidate UIDs quickly (no pulls yet)
   const multiselectUids =
     (await roamAlphaAPI.ui.individualMultiselect.getSelectedUids?.()) || [];
 
@@ -155,19 +172,19 @@ async function teleport(e, blockref, tag) {
     candidateUids = multiselectUids.map(String);
   } else {
     if (e) {
-      const uid = String(e["block-uid"]);
-      if (!uid) return;
-      candidateUids = [uid];
+      const buid = e["block-uid"];
+      if (!buid) return;
+      candidateUids = [String(buid)];
     } else {
-      const uid = await window.roamAlphaAPI.ui.getFocusedBlock()?.["block-uid"];
-      if (!uid) {
+      const focused = await window.roamAlphaAPI.ui.getFocusedBlock();
+      const fuid = focused && focused["block-uid"];
+      if (!fuid) {
         alert("Place the cursor in the block you want to teleport first.");
         return;
       }
-      candidateUids = [String(uid)];
+      candidateUids = [String(fuid)];
     }
   }
-
   if (candidateUids.length === 0) return;
 
   // 2) Prompt FIRST (fast paint; no heavy work yet)
