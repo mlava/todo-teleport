@@ -1,5 +1,3 @@
-// todo-teleport — extension.js (minimal pulls; no :block/children)
-
 // ---- Date limits for DatePicker ----
 const date = new Date();
 date.setFullYear(date.getFullYear() + 6);
