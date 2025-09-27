@@ -1,4 +1,4 @@
-// todo-teleport — extension.js (stable dialog + prompt-first + BP DatePicker fix)
+// todo-teleport — extension.js (minimal pulls; no :block/children)
 
 // ---- Date limits for DatePicker ----
 const date = new Date();
@@ -12,9 +12,8 @@ const MIN = new Date(2019, 0, 1);
   const style = document.createElement("style");
   style.id = "teleport-dialog-styles";
   style.textContent = `
-    /* Make sure the Blueprint overlay sits above Roam's own layers */
     .teleport-dialog .bp4-overlay-backdrop,
-    .teleport-dialog.bp4-overlay { z-index: 9999 !important; }
+    .teleport-dialog.bp4-overlay { z-index: 2147483647 !important; }
   `;
   document.head.appendChild(style);
 })();
@@ -25,7 +24,6 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
 
   const onChange = window.React.useCallback(
     (picked) => {
-      // Clicking an already-selected day can emit null if clearing is allowed.
       if (!picked) return; // ignore "clear" events
       onSubmit(picked);
       onClose();
@@ -34,7 +32,7 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
   );
 
   const onCancel = window.React.useCallback(() => {
-    onSubmit(""); // sentinel for cancel
+    onSubmit(""); // sentinel
     onClose();
   }, [onSubmit, onClose]);
 
@@ -63,13 +61,8 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
           minDate: MIN,
           highlightCurrentDay: true,
           popoverProps: { minimal: true, captureDismiss: true },
-          // IMPORTANT: use uncontrolled defaultValue so the first click on "today" counts,
-          // and prevent clearing to null by clicking the selected day.
           defaultValue: today,
           canClearSelection: false,
-          // (Alternative if you prefer *no* preselection):
-          // initialMonth: today,
-          // defaultValue: undefined,
         })
       )
     )
@@ -79,7 +72,6 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
 // ---- Prompt helper (singleton, never gets stuck) ----
 const prompt = ({ title }) =>
   new Promise((resolve) => {
-    // Prevent multiple prompts at once
     if (window.__teleportPromptOpen) return;
     window.__teleportPromptOpen = true;
 
@@ -90,9 +82,7 @@ const prompt = ({ title }) =>
     const safeClose = () => {
       try {
         if (parent.isConnected) {
-          try {
-            window.ReactDOM.unmountComponentAtNode(parent);
-          } catch (_) {}
+          try { window.ReactDOM.unmountComponentAtNode(parent); } catch {}
           parent.remove();
         }
       } finally {
@@ -110,8 +100,7 @@ const prompt = ({ title }) =>
         parent
       );
     } catch (err) {
-      // If render fails for any reason, ensure we don't leave the guard stuck.
-      console.error("[todo-teleport] Failed to render dialog:", err);
+      console.error("[todo-teleport] render failed:", err);
       safeClose();
     }
   });
@@ -147,23 +136,17 @@ export default {
     });
   },
   onunload: () => {
-    window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
-      label: "Teleport TODOs",
-    });
-    window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
-      label: "Teleport TODOs and leave blockref behind",
-    });
-    window.roamAlphaAPI.ui.blockContextMenu.removeCommand({
-      label: "Teleport TODO date tag",
-    });
+    window.roamAlphaAPI.ui.blockContextMenu.removeCommand({ label: "Teleport TODOs" });
+    window.roamAlphaAPI.ui.blockContextMenu.removeCommand({ label: "Teleport TODOs and leave blockref behind" });
+    window.roamAlphaAPI.ui.blockContextMenu.removeCommand({ label: "Teleport TODO date tag" });
   },
 };
 
-// ---- Main behaviour (prompt-first; then heavy pulls) ----
+// ---- Main behaviour (prompt-first; minimal pulls) ----
 async function teleport(e, blockref, tag) {
-  const regexTODO = /(\{\{\[\[TODO\]\]\}\})/i; // case-insensitive
+  const regexTODO = /(\{\{\[\[TODO\]\]\}\})/i;
 
-  // 1) Collect candidate UIDs quickly (no pulls yet)
+  // 1) Collect candidate UIDs quickly
   const multiselectUids =
     (await roamAlphaAPI.ui.individualMultiselect.getSelectedUids?.()) || [];
 
@@ -171,10 +154,8 @@ async function teleport(e, blockref, tag) {
   if (multiselectUids.length > 0) {
     candidateUids = multiselectUids.map(String);
   } else {
-    if (e) {
-      const buid = e["block-uid"];
-      if (!buid) return;
-      candidateUids = [String(buid)];
+    if (e && e["block-uid"]) {
+      candidateUids = [String(e["block-uid"])];
     } else {
       const focused = await window.roamAlphaAPI.ui.getFocusedBlock();
       const fuid = focused && focused["block-uid"];
@@ -187,18 +168,18 @@ async function teleport(e, blockref, tag) {
   }
   if (candidateUids.length === 0) return;
 
-  // 2) Prompt FIRST (fast paint; no heavy work yet)
+  // 2) Prompt FIRST
   const selectedDate = await prompt({ title: "To which date?" });
   if (!selectedDate || !(selectedDate instanceof Date)) return;
 
-  // 3) Compute target date strings
+  // 3) Build target date info
   const year = selectedDate.getFullYear();
   const dd = String(selectedDate.getDate()).padStart(2, "0");
   const mm = String(selectedDate.getMonth() + 1).padStart(2, "0");
   const newDate = `${mm}-${dd}-${year}`;
   const titleDate = convertToRoamDate(newDate);
 
-  // Ensure target DNP page exists if we're going to move
+  // Create DNP if needed (only for move mode)
   if (!tag) {
     const page = await window.roamAlphaAPI.q(
       `[:find (pull ?e [:node/title]) :where [?e :block/uid "${newDate}"]]`
@@ -208,134 +189,107 @@ async function teleport(e, blockref, tag) {
     }
   }
 
-  // 4) NOW do the heavy pulls for just the selected blocks
-  const pulled = [];
+  // 4) NOW pull only what we need, as lightly as possible
+
+  // For tag-only: we only need string + uid
+  if (tag) {
+    // Pull strings for all candidates
+    const items = [];
+    for (let i = 0; i < candidateUids.length; i++) {
+      const uid = candidateUids[i];
+      const info = await window.roamAlphaAPI.data.pull(
+        "[:block/uid :block/string]",
+        [":block/uid", uid]
+      );
+      if (!info) continue;
+      const text = String(info[":block/string"] || "");
+      if (regexTODO.test(text)) items.push({ uid, text });
+    }
+
+    if (items.length === 0) {
+      alert("No selected blocks contained {{[[TODO]]}}.");
+      return;
+    }
+
+    const longMonth =
+      /\[\[(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{1,2}(?:st|nd|rd|th),\s\d{4}\]\]/;
+
+    for (let j = 0; j < items.length; j++) {
+      const src = items[j].text;
+      if (!longMonth.test(src)) continue; // keep behavior: only change existing date tags
+      const replaced = src.replace(longMonth, `[[${titleDate}]]`);
+      await window.roamAlphaAPI.updateBlock({
+        block: { uid: items[j].uid, string: replaced },
+      });
+      await sleep(50);
+    }
+    // Done with tag mode
+    return;
+  }
+
+  // For move mode: we need string (to confirm TODO), order, and direct parent uid.
+  // Minimal pull: parents (uids only), order, string.
+  const todoBlocks = [];
   for (let i = 0; i < candidateUids.length; i++) {
     const uid = candidateUids[i];
     const info = await window.roamAlphaAPI.data.pull(
-      "[:block/string :block/uid :block/order {:block/parents ...} {:block/children ...}]",
+      "[:block/uid :block/string :block/order {:block/parents [:block/uid]}]",
       [":block/uid", uid]
     );
     if (!info) continue;
 
-    // find direct parent and original order
-    let parentUid = null;
-    const parents = info[":block/parents"] || [];
-    for (let p = 0; p < parents.length; p++) {
-      const kids = parents[p][":block/children"] || [];
-      for (let k = 0; k < kids.length; k++) {
-        if (kids[k][":block/uid"] === info[":block/uid"]) parentUid = parents[p][":block/uid"];
-      }
-    }
+    const text = String(info[":block/string"] || "");
+    if (!regexTODO.test(text)) continue;
 
-    pulled.push({
-      uid: String(info[":block/uid"]),
-      text: String(info[":block/string"] || ""),
-      order: info[":block/order"] ?? 0,
-      parent: parentUid,
+    const order = info[":block/order"] ?? 0;
+    const parents = (info[":block/parents"] || []);
+    const directParent = parents.length ? parents[parents.length - 1][":block/uid"] : null;
+
+    todoBlocks.push({
+      uid,
+      text,
+      order,
+      parent: directParent,
     });
   }
 
-  // 5) Keep only blocks that actually contain TODO
-  const todoBlocks = pulled.filter((b) => regexTODO.test(b.text));
   if (todoBlocks.length === 0) {
     alert("No selected blocks contained {{[[TODO]]}}.");
     return;
   }
 
-  if (tag) {
-    // Change date TAG in string, leave block location unchanged
-    const longMonth =
-      /\[\[(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{1,2}(?:st|nd|rd|th),\s\d{4}\]\]/;
-    const isoDate = /\[\[\d{4}-\d{2}-\d{2}\]\]/;
+  // 5) Move + optional blockref
+  for (let j = 0; j < todoBlocks.length; j++) {
+    await window.roamAlphaAPI.moveBlock({
+      location: { "parent-uid": newDate, order: j },
+      block: { uid: String(todoBlocks[j].uid) },
+    });
 
-    for (let j = 0; j < todoBlocks.length; j++) {
-      const src = String(todoBlocks[j].text);
-      let replaced = src;
-
-      if (longMonth.test(src)) {
-        replaced = src.replace(longMonth, `[[${titleDate}]]`);
-      } else if (isoDate.test(src)) {
-        replaced = src.replace(isoDate, `[[${titleDate}]]`);
-      } else {
-        // If no existing date tag, keep behavior: do nothing
-        continue;
-      }
-
-      await sleep(100);
-      await window.roamAlphaAPI.updateBlock({
-        block: { uid: todoBlocks[j].uid, string: replaced },
+    if (blockref && todoBlocks[j].parent) {
+      await window.roamAlphaAPI.createBlock({
+        location: { "parent-uid": todoBlocks[j].parent, order: todoBlocks[j].order },
+        block: { string: `((${String(todoBlocks[j].uid)}))` },
       });
     }
-  } else {
-    // Move block(s) to new DNP; optionally leave blockref behind
-    for (let j = 0; j < todoBlocks.length; j++) {
-      await window.roamAlphaAPI.moveBlock({
-        location: { "parent-uid": newDate, order: j },
-        block: { uid: String(todoBlocks[j].uid) },
-      });
-      if (blockref) {
-        await window.roamAlphaAPI.createBlock({
-          location: { "parent-uid": todoBlocks[j].parent, order: todoBlocks[j].order },
-          block: { string: `((${String(todoBlocks[j].uid)}))` },
-        });
-      }
-    }
+    await sleep(25);
   }
 
   // 6) Turn off multiselect if it was on
   if (multiselectUids.length !== 0) {
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "m",
-        keyCode: 77,
-        code: "KeyM",
-        which: 77,
-        shiftKey: false,
-        ctrlKey: true,
-        metaKey: false,
-      })
-    );
-    window.dispatchEvent(
-      new KeyboardEvent("keyup", {
-        key: "m",
-        keyCode: 77,
-        code: "KeyM",
-        which: 77,
-        shiftKey: false,
-        ctrlKey: true,
-        metaKey: false,
-      })
-    );
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "m", keyCode: 77, code: "KeyM", which: 77, ctrlKey: true }));
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "m", keyCode: 77, code: "KeyM", which: 77, ctrlKey: true }));
   }
 }
 
 // ---- Helpers ----
 function convertToRoamDate(dateString) {
-  const parsedDate = dateString.split("-");
-  const year = parsedDate[2];
-  const month = Number(parsedDate[0]);
-  const months = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-  const monthName = months[month - 1];
-  const day = Number(parsedDate[1]);
-  const suffix =
-    (day >= 4 && day <= 20) || (day >= 24 && day <= 30)
-      ? "th"
-      : ["st", "nd", "rd"][day % 10 - 1];
-  return `${monthName} ${day}${suffix}, ${year}`;
+  const [mm, dd, year] = dateString.split("-");
+  const month = Number(mm);
+  const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const day = Number(dd);
+  const suffix = (day >= 4 && day <= 20) || (day >= 24 && day <= 30)
+    ? "th" : ["st", "nd", "rd"][day % 10 - 1];
+  return `${months[month - 1]} ${day}${suffix}, ${year}`;
 }
 
 async function sleep(ms) {
