@@ -1,10 +1,8 @@
-// ---- Date limits for DatePicker ----
 const date = new Date();
 date.setFullYear(date.getFullYear() + 6);
 const MAX = new Date(date);
 const MIN = new Date(2019, 0, 1);
 
-// ---- One-time style injection to ensure dialog overlays Roam UI reliably ----
 (function ensureTeleportStyles() {
   if (document.getElementById("teleport-dialog-styles")) return;
   const style = document.createElement("style");
@@ -16,23 +14,41 @@ const MIN = new Date(2019, 0, 1);
   document.head.appendChild(style);
 })();
 
-// ---- React Dialog ----
 const FormDialog = ({ onSubmit, title, onClose }) => {
   const today = new Date();
+  const [selectedDate, setSelectedDate] = window.React.useState(today);
 
-  const onChange = window.React.useCallback(
-    (picked) => {
-      if (!picked) return; // ignore "clear" events
-      onSubmit(picked);
-      onClose();
-    },
-    [onSubmit, onClose]
-  );
-
-  const onCancel = window.React.useCallback(() => {
-    onSubmit(""); // sentinel
+  const onChange = window.React.useCallback((picked) => {
+    if (!picked) return;
+    setSelectedDate(picked);
+    onSubmit(picked);
     onClose();
   }, [onSubmit, onClose]);
+
+  const onCancel = window.React.useCallback(() => {
+    onSubmit("");
+    onClose();
+  }, [onSubmit, onClose]);
+
+  window.React.useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        onSubmit(selectedDate);
+        onClose();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onSubmit("");
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [onSubmit, onClose, selectedDate]);
 
   return window.React.createElement(
     window.Blueprint.Core.Dialog,
@@ -59,7 +75,7 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
           minDate: MIN,
           highlightCurrentDay: true,
           popoverProps: { minimal: true, captureDismiss: true },
-          defaultValue: today,
+          value: selectedDate,
           canClearSelection: false,
         })
       )
@@ -67,17 +83,21 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
   );
 };
 
-// ---- Prompt helper (singleton, never gets stuck) ----
 const prompt = ({ title }) =>
   new Promise((resolve) => {
-    if (window.__teleportPromptOpen) return;
+    if (window.__teleportPromptOpen) {
+      resolve("");
+      return;
+    }
     window.__teleportPromptOpen = true;
 
     const parent = document.createElement("div");
     parent.id = "teleport-prompt-root";
     document.body.appendChild(parent);
 
-    const safeClose = () => {
+    let settled = false;
+
+    const cleanup = () => {
       try {
         if (parent.isConnected) {
           try { window.ReactDOM.unmountComponentAtNode(parent); } catch {}
@@ -88,22 +108,28 @@ const prompt = ({ title }) =>
       }
     };
 
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
     try {
       window.ReactDOM.render(
         window.React.createElement(FormDialog, {
-          onSubmit: resolve,
+          onSubmit: finish,
           title,
-          onClose: safeClose,
+          onClose: () => finish(""),
         }),
         parent
       );
     } catch (err) {
       console.error("[todo-teleport] render failed:", err);
-      safeClose();
+      finish("");
     }
   });
-
-// ---- Roam Depot entry points ----
+  
 export default {
   onload: ({ extensionAPI }) => {
     extensionAPI.ui.commandPalette.addCommand({
@@ -140,11 +166,9 @@ export default {
   },
 };
 
-// ---- Main behaviour (prompt-first; minimal pulls) ----
 async function teleport(e, blockref, tag) {
   const regexTODO = /(\{\{\[\[TODO\]\]\}\})/i;
-
-  // 1) Collect candidate UIDs quickly
+  
   const multiselectUids =
     (await roamAlphaAPI.ui.individualMultiselect.getSelectedUids?.()) || [];
 
@@ -165,19 +189,16 @@ async function teleport(e, blockref, tag) {
     }
   }
   if (candidateUids.length === 0) return;
-
-  // 2) Prompt FIRST
+  
   const selectedDate = await prompt({ title: "To which date?" });
   if (!selectedDate || !(selectedDate instanceof Date)) return;
-
-  // 3) Build target date info
+  
   const year = selectedDate.getFullYear();
   const dd = String(selectedDate.getDate()).padStart(2, "0");
   const mm = String(selectedDate.getMonth() + 1).padStart(2, "0");
   const newDate = `${mm}-${dd}-${year}`;
   const titleDate = convertToRoamDate(newDate);
-
-  // Create DNP if needed (only for move mode)
+  
   if (!tag) {
     const page = await window.roamAlphaAPI.q(
       `[:find (pull ?e [:node/title]) :where [?e :block/uid "${newDate}"]]`
@@ -186,12 +207,8 @@ async function teleport(e, blockref, tag) {
       await window.roamAlphaAPI.createPage({ page: { title: titleDate, uid: newDate } });
     }
   }
-
-  // 4) NOW pull only what we need, as lightly as possible
-
-  // For tag-only: we only need string + uid
+  
   if (tag) {
-    // Pull strings for all candidates
     const items = [];
     for (let i = 0; i < candidateUids.length; i++) {
       const uid = candidateUids[i];
@@ -214,19 +231,15 @@ async function teleport(e, blockref, tag) {
 
     for (let j = 0; j < items.length; j++) {
       const src = items[j].text;
-      if (!longMonth.test(src)) continue; // keep behavior: only change existing date tags
+      if (!longMonth.test(src)) continue;
       const replaced = src.replace(longMonth, `[[${titleDate}]]`);
-      await window.roamAlphaAPI.updateBlock({
-        block: { uid: items[j].uid, string: replaced },
-      });
       await sleep(50);
+      await window.roamAlphaAPI.updateBlock({"block": {"uid": items[j].uid, "string": replaced}});
     }
-    // Done with tag mode
+    
     return;
   }
-
-  // For move mode: we need string (to confirm TODO), order, and direct parent uid.
-  // Minimal pull: parents (uids only), order, string.
+  
   const todoBlocks = [];
   for (let i = 0; i < candidateUids.length; i++) {
     const uid = candidateUids[i];
@@ -255,8 +268,7 @@ async function teleport(e, blockref, tag) {
     alert("No selected blocks contained {{[[TODO]]}}.");
     return;
   }
-
-  // 5) Move + optional blockref
+  
   for (let j = 0; j < todoBlocks.length; j++) {
     await window.roamAlphaAPI.moveBlock({
       location: { "parent-uid": newDate, order: j },
@@ -271,8 +283,7 @@ async function teleport(e, blockref, tag) {
     }
     await sleep(25);
   }
-
-  // 6) Turn off multiselect if it was on
+  
   if (multiselectUids.length !== 0) {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "m", keyCode: 77, code: "KeyM", which: 77, ctrlKey: true }));
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "m", keyCode: 77, code: "KeyM", which: 77, ctrlKey: true }));
