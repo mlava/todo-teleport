@@ -1,6 +1,8 @@
 If you ever end your day with some of your {{[[TODO]]}} blocks in Roam still not {{[[DONE]]}}, this extension provides an easy way to send them to another daily note page to deal with then.
 
 **New:**
+- fixes for user reported issues with freezing
+- allow Escape and Enter key usage in calendar picker
 - add alternative command to change date tags in todos but not move their parent page
   - ie. change [[February 22nd, 2024]] to [[February 23rd, 2024]] within the block
 - option to leave behind a blockref after teleporting a todo to another date
