@@ -1,6 +1,7 @@
 If you ever end your day with some of your {{[[TODO]]}} blocks in Roam still not {{[[DONE]]}}, this extension provides an easy way to send them to another daily note page to deal with then.
 
 **New:**
+- full keyboard control of popup; tab, arrows, enter and escape allow all functions to be accessed 
 - fixes for user reported issues with freezing
 - allow Escape and Enter key usage in calendar picker
 - add alternative command to change date tags in todos but not move their parent page
