@@ -51,8 +51,10 @@
     height: 36px;
 }
 
+
 .teleport-dialog .teleport-calendar-controls select:focus {
-    outline-offset: 1px;
+    outline: 2px solid #2d72d9;
+    outline-offset: 2px;
 }
 
 .teleport-dialog .teleport-calendar-nav {
@@ -65,6 +67,11 @@
     cursor: pointer;
     font-size: 16px;
     line-height: 1;
+}
+
+.teleport-dialog .teleport-calendar-nav:focus {
+    outline: 2px solid #2d72d9;
+    outline-offset: 2px;
 }
 
 .teleport-dialog .teleport-calendar-nav:disabled {
