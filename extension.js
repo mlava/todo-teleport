@@ -6,6 +6,63 @@ const MONTH_NAMES = [
   "January","February","March","April","May","June","July","August","September","October","November","December"
 ];
 
+function parseColor(value) {
+  if (!value) return [31, 41, 51];
+  const ctx = value.trim();
+  const rgbMatch = ctx.match(/rgba?\(([^)]+)\)/i);
+  if (rgbMatch) {
+    const parts = rgbMatch[1].split(/\s*,\s*/).map(Number);
+    return [parts[0] || 0, parts[1] || 0, parts[2] || 0];
+  }
+  if (ctx.startsWith('#')) {
+    const hex = ctx.slice(1);
+    const int = parseInt(hex.length === 3 ? hex.replace(/./g, (c) => c + c) : hex, 16);
+    return [(int >> 16) & 255, (int >> 8) & 255, int & 255];
+  }
+  return [31, 41, 51];
+}
+
+function getLuminance([r, g, b]) {
+  const srgb = [r, g, b].map((c) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+}
+
+function mixColors([r1, g1, b1], [r2, g2, b2], weight) {
+  return [
+    Math.round(r1 * (1 - weight) + r2 * weight),
+    Math.round(g1 * (1 - weight) + g2 * weight),
+    Math.round(b1 * (1 - weight) + b2 * weight),
+  ];
+}
+
+function rgbString([r, g, b], alpha) {
+  if (typeof alpha === 'number') {
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function computeThemeStyles(anchor) {
+  try {
+    const target = anchor || document.body;
+    const style = window.getComputedStyle(target);
+    const fallbackBackground = window.getComputedStyle(document.body).backgroundColor;
+    const textColor = parseColor(style.color);
+    const bgColor = parseColor(style.backgroundColor || fallbackBackground);
+    const dark = getLuminance(bgColor) < 0.4;
+    const text = rgbString(textColor);
+    const selectBg = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.05)';
+    const navBg = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.04)';
+    const optionBg = dark ? rgbString(mixColors(bgColor, [255,255,255], 0.1)) : '#ffffff';
+    return { text, selectBg, navBg, optionBg };
+  } catch (err) {
+    return { text: '#1f2933', selectBg: 'rgba(0,0,0,0.05)', navBg: 'rgba(0,0,0,0.04)', optionBg: '#ffffff' };
+  }
+}
+
 (function ensureTeleportStyles() {
   if (document.getElementById("teleport-dialog-styles")) return;
   const style = document.createElement("style");
@@ -20,6 +77,10 @@ const MONTH_NAMES = [
     .teleport-calendar-nav { border: 1px solid rgba(16,22,26,0.3); background: transparent; padding: 4px 8px; border-radius: 3px; font-size: 16px; line-height: 1; cursor: pointer; }
     .teleport-calendar-nav:disabled { opacity: 0.4; cursor: not-allowed; }
     .teleport-datepicker-hide-caption .bp4-datepicker-caption { display: none; }
+    .teleport-datepicker-theme { color: inherit; }
+    .teleport-datepicker-theme .bp4-html-select select { color: inherit !important; background-color: transparent !important; border-color: inherit !important; }
+    .teleport-datepicker-theme .bp4-html-select::after { color: inherit; }
+    .teleport-datepicker-theme .bp4-button { color: inherit; }
   `;
   document.head.appendChild(style);
 })();
@@ -31,6 +92,11 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
   const calendarRef = window.React.useRef(null);
   const monthSelectRef = window.React.useRef(null);
   const yearSelectRef = window.React.useRef(null);
+  const [theme, setTheme] = window.React.useState(() => computeThemeStyles());
+  window.React.useLayoutEffect(() => {
+    const root = dialogRef.current?.closest?.('.bp3-dialog') || dialogRef.current || document.body;
+    setTheme(computeThemeStyles(root));
+  }, []);
 
   const focusSelectedDay = window.React.useCallback(() => {
     if (!calendarRef.current) return;
@@ -171,6 +237,30 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
     focusDaySoon();
   }, [focusDaySoon]);
 
+  window.React.useEffect(() => {
+    const selects = [];
+    if (monthSelectRef.current) selects.push(monthSelectRef.current);
+    if (yearSelectRef.current) selects.push(yearSelectRef.current);
+    if (calendarRef.current) {
+      selects.push(...calendarRef.current.querySelectorAll('select'));
+      const navButtons = calendarRef.current.querySelectorAll('button, .bp4-icon');
+      for (let i = 0; i < navButtons.length; i++) {
+        navButtons[i].style.color = theme.text;
+      }
+    }
+    for (let i = 0; i < selects.length; i++) {
+      const sel = selects[i];
+      sel.style.color = theme.text;
+      sel.style.backgroundColor = theme.selectBg;
+      sel.style.borderColor = theme.text;
+      sel.style.setProperty('-webkit-text-fill-color', theme.text);
+      const parent = sel.parentElement;
+      if (parent && parent.classList.contains('bp4-html-select')) {
+        parent.style.color = theme.text;
+      }
+    }
+  }, [theme]);
+
   const handleDayKeyDown = window.React.useCallback((day, modifiers, event) => {
     if (!event) return;
     const offsets = {
@@ -289,10 +379,19 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
       { className: window.Blueprint.Core.Classes.DIALOG_BODY, ref: dialogRef },
       window.React.createElement(
         "div",
-        { className: "teleport-calendar-wrapper" },
+      {
+        className: "teleport-calendar-wrapper",
+        style: {
+          color: theme.text,
+          alignItems: 'center',
+          width: '100%',
+          maxWidth: '340px',
+          margin: '0 auto',
+        },
+      },
         window.React.createElement(
           "div",
-          { className: "teleport-calendar-controls" },
+          { className: "teleport-calendar-controls", style: { color: theme.text } },
           window.React.createElement(
             "button",
             {
@@ -302,13 +401,13 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
               disabled: prevMonthDisabled,
               onClick: goPrevMonth,
               "aria-label": "Previous month",
+              style: { color: theme.text, borderColor: theme.text, backgroundColor: theme.navBg },
             },
             "‹"
           ),
           window.React.createElement(
-            "label",
-            {},
-            "Month",
+            "div",
+            { className: "teleport-select-wrapper" },
             window.React.createElement(
               "select",
               {
@@ -316,16 +415,25 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
                 value: monthValue,
                 onChange: handleMonthChange,
                 onKeyDown: handleMonthKeyDown,
+                style: {
+                  color: theme.text,
+                  backgroundColor: theme.selectBg,
+                  borderColor: theme.text,
+                },
+                'aria-label': 'Month',
               },
               MONTH_NAMES.map((name, index) =>
-                window.React.createElement("option", { key: name, value: String(index) }, name)
+                window.React.createElement(
+                  "option",
+                  { key: name, value: String(index), style: { color: theme.text, backgroundColor: theme.optionBg } },
+                  name
+                )
               )
             )
           ),
           window.React.createElement(
-            "label",
-            {},
-            "Year",
+            "div",
+            { className: "teleport-select-wrapper" },
             window.React.createElement(
               "select",
               {
@@ -334,9 +442,19 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
                 onChange: handleYearChange,
                 onKeyDown: handleYearKeyDown,
                 disabled: years.length <= 1,
+                style: {
+                  color: theme.text,
+                  backgroundColor: theme.selectBg,
+                  borderColor: theme.text,
+                },
+                'aria-label': 'Year',
               },
               years.map((year) =>
-                window.React.createElement("option", { key: year, value: String(year) }, String(year))
+                window.React.createElement(
+                  "option",
+                  { key: year, value: String(year), style: { color: theme.text, backgroundColor: theme.optionBg } },
+                  String(year)
+                )
               )
             )
           ),
@@ -349,22 +467,34 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
               disabled: nextMonthDisabled,
               onClick: goNextMonth,
               "aria-label": "Next month",
+              style: { color: theme.text, borderColor: theme.text, backgroundColor: theme.navBg },
             },
             "›"
           )
         ),
         window.React.createElement(
           "div",
-          { className: "teleport-datepicker-hide-caption", ref: calendarRef },
-            window.React.createElement(window.Blueprint.DateTime.DatePicker, {
-              onChange,
-              maxDate: MAX,
-              minDate: MIN,
-              highlightCurrentDay: true,
+          {
+            className: "teleport-datepicker-hide-caption teleport-datepicker-theme",
+            ref: calendarRef,
+            style: {
+              color: theme.text,
+              '--teleport-picker-text': theme.text,
+              display: 'flex',
+              justifyContent: 'center',
+              width: '100%',
+            },
+          },
+          window.React.createElement(window.Blueprint.DateTime.DatePicker, {
+            onChange,
+            maxDate: MAX,
+            minDate: MIN,
+            highlightCurrentDay: true,
             popoverProps: { minimal: true, captureDismiss: true },
             value: selectedDate,
             canClearSelection: false,
             dayPickerProps,
+            navbarElement: () => null,
           })
         )
       )

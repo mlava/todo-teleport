@@ -2,6 +2,97 @@
     width: fit-content !important;
 }
 
+.bp3-light .bp3-dialog, .bp3-dark .bp3-dialog {
+    width: auto !important;
+}
+
 .bp3-datepicker .DayPicker-Day.DayPicker-Day--isToday .bp3-datepicker-day-wrapper {
     background-color: rgba(16,22,26,0.05) !important;
+}
+
+.teleport-calendar-controls select {
+    border-radius: 3px;
+    border: 1px solid var(--bp4-input-border-color, #8c8f94);
+    background-color: var(--bp4-input-background-color, #ffffff);
+    color: var(--bp4-input-text-color, #182026);
+    padding: 4px 8px;
+    font-size: 14px;
+    line-height: 20px;
+    box-shadow: none;
+}
+
+.teleport-dialog .teleport-calendar-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: stretch;
+}
+
+.teleport-dialog .teleport-calendar-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.teleport-dialog .teleport-calendar-controls label {
+    display: none;
+}
+
+.teleport-select-wrapper {
+    display: flex;
+}
+
+.teleport-dialog .teleport-calendar-controls select {
+    margin-top: 2px;
+    min-width: 120px;
+}
+
+.teleport-dialog .teleport-calendar-controls select:focus {
+    outline-offset: 1px;
+}
+
+.teleport-dialog .teleport-calendar-nav {
+    padding: 4px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+}
+
+.teleport-dialog .teleport-calendar-nav:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.teleport-dialog .teleport-datepicker-hide-caption .bp4-datepicker-caption,
+.teleport-dialog .teleport-datepicker-hide-caption .bp4-html-select,
+.teleport-dialog .teleport-datepicker-hide-caption .DayPicker-Caption,
+.teleport-dialog .teleport-datepicker-hide-caption .DayPicker-NavBar {
+    display: none !important;
+}
+
+.teleport-dialog .teleport-datepicker-hide-caption .bp4-html-select select {
+    display: none !important;
+}
+
+.teleport-dialog .teleport-datepicker-hide-caption .bp4-datepicker {
+    width: 100%;
+}
+
+.teleport-dialog .teleport-datepicker-hide-caption .DayPicker {
+    width: 100%;
+}
+
+.teleport-dialog .teleport-datepicker-hide-caption .DayPicker-Month {
+    width: 100%;
+    table-layout: fixed;
+}
+
+.teleport-dialog .teleport-datepicker-hide-caption .DayPicker-Week {
+    width: 100%;
+}
+
+.teleport-dialog .teleport-datepicker-hide-caption .DayPicker-Day {
+    width: 14.2857%;
 }
