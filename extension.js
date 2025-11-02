@@ -2,6 +2,9 @@ const date = new Date();
 date.setFullYear(date.getFullYear() + 6);
 const MAX = new Date(date);
 const MIN = new Date(2019, 0, 1);
+const MONTH_NAMES = [
+  "January","February","March","April","May","June","July","August","September","October","November","December"
+];
 
 (function ensureTeleportStyles() {
   if (document.getElementById("teleport-dialog-styles")) return;
@@ -10,6 +13,13 @@ const MIN = new Date(2019, 0, 1);
   style.textContent = `
     .teleport-dialog .bp4-overlay-backdrop,
     .teleport-dialog.bp4-overlay { z-index: 2147483647 !important; }
+    .teleport-calendar-wrapper { display: flex; flex-direction: column; gap: 12px; }
+    .teleport-calendar-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .teleport-calendar-controls label { display: flex; flex-direction: column; font-size: 11px; letter-spacing: 0.02em; text-transform: uppercase; }
+    .teleport-calendar-controls select { margin-top: 2px; min-width: 120px; }
+    .teleport-calendar-nav { border: 1px solid rgba(16,22,26,0.3); background: transparent; padding: 4px 8px; border-radius: 3px; font-size: 16px; line-height: 1; cursor: pointer; }
+    .teleport-calendar-nav:disabled { opacity: 0.4; cursor: not-allowed; }
+    .teleport-datepicker-hide-caption .bp4-datepicker-caption { display: none; }
   `;
   document.head.appendChild(style);
 })();
@@ -17,6 +27,68 @@ const MIN = new Date(2019, 0, 1);
 const FormDialog = ({ onSubmit, title, onClose }) => {
   const today = new Date();
   const [selectedDate, setSelectedDate] = window.React.useState(today);
+  const dialogRef = window.React.useRef(null);
+  const calendarRef = window.React.useRef(null);
+  const monthSelectRef = window.React.useRef(null);
+  const yearSelectRef = window.React.useRef(null);
+
+  const focusSelectedDay = window.React.useCallback(() => {
+    if (!calendarRef.current) return;
+    const root = calendarRef.current;
+    const buttons = root.querySelectorAll(".bp4-datepicker-day-wrapper button");
+    for (let i = 0; i < buttons.length; i++) buttons[i].tabIndex = -1;
+    const selected =
+      root.querySelector(".bp4-datepicker-day-wrapper button.bp4-datepicker-day-selected") ||
+      root.querySelector(".bp4-datepicker-day-wrapper button[aria-current=\"date\"]");
+    if (selected && typeof selected.focus === "function") {
+      selected.tabIndex = 0;
+      try {
+        selected.focus({ preventScroll: true });
+      } catch {
+        selected.focus();
+      }
+      return true;
+    }
+    return false;
+  }, []);
+
+  const focusDaySoon = window.React.useCallback(() => {
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      if (focusSelectedDay()) return;
+      window.requestAnimationFrame(tick);
+    };
+    if (!focusSelectedDay()) {
+      window.requestAnimationFrame(tick);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [focusSelectedDay]);
+
+  const focusMonthSelect = window.React.useCallback(() => {
+    const node = monthSelectRef.current;
+    if (!node || node.disabled) return false;
+    window.requestAnimationFrame(() => node.focus());
+    return true;
+  }, []);
+
+  const focusYearSelect = window.React.useCallback(() => {
+    const node = yearSelectRef.current;
+    if (!node || node.disabled) return false;
+    window.requestAnimationFrame(() => node.focus());
+    return true;
+  }, []);
+
+  const years = window.React.useMemo(() => {
+    const list = [];
+    for (let y = MIN.getFullYear(); y <= MAX.getFullYear(); y += 1) list.push(y);
+    return list;
+  }, []);
+
+  const monthValue = String(selectedDate.getMonth());
+  const yearValue = String(selectedDate.getFullYear());
 
   const onChange = window.React.useCallback((picked) => {
     if (!picked) return;
@@ -50,6 +122,155 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [onSubmit, onClose, selectedDate]);
 
+  window.React.useLayoutEffect(() => {
+    const cancel = focusDaySoon();
+    return typeof cancel === "function" ? cancel : undefined;
+  }, [focusDaySoon, selectedDate]);
+
+  const prevMonthDisabled = window.React.useMemo(() => {
+    const probe = new Date(selectedDate);
+    probe.setDate(1);
+    probe.setMonth(probe.getMonth() - 1);
+    return probe < MIN;
+  }, [selectedDate]);
+
+  const nextMonthDisabled = window.React.useMemo(() => {
+    const probe = new Date(selectedDate);
+    probe.setDate(1);
+    probe.setMonth(probe.getMonth() + 1);
+    return probe > MAX;
+  }, [selectedDate]);
+
+  const changeMonthBy = window.React.useCallback((delta) => {
+    setSelectedDate((prev) => {
+      const base = new Date(prev);
+      const originalDay = prev.getDate();
+      base.setDate(1);
+      base.setMonth(base.getMonth() + delta);
+      const safeDay = Math.min(originalDay, daysInMonth(base.getFullYear(), base.getMonth()));
+      base.setDate(safeDay);
+      return clampDateToRange(base);
+    });
+    focusDaySoon();
+  }, [focusDaySoon]);
+
+  const goPrevMonth = window.React.useCallback(() => changeMonthBy(-1), [changeMonthBy]);
+  const goNextMonth = window.React.useCallback(() => changeMonthBy(1), [changeMonthBy]);
+
+  const handleMonthChange = window.React.useCallback((event) => {
+    const month = Number(event.target.value);
+    if (Number.isNaN(month)) return;
+    setSelectedDate((prev) => withYearMonth(prev, prev.getFullYear(), month));
+    focusDaySoon();
+  }, [focusDaySoon]);
+
+  const handleYearChange = window.React.useCallback((event) => {
+    const year = Number(event.target.value);
+    if (Number.isNaN(year)) return;
+    setSelectedDate((prev) => withYearMonth(prev, year, prev.getMonth()));
+    focusDaySoon();
+  }, [focusDaySoon]);
+
+  const handleDayKeyDown = window.React.useCallback((day, modifiers, event) => {
+    if (!event) return;
+    const offsets = {
+      ArrowLeft: -1,
+      ArrowRight: 1,
+      ArrowUp: -7,
+      ArrowDown: 7,
+    };
+    if (event.key === "Tab") {
+      event.preventDefault();
+      event.stopPropagation?.();
+      event.stopImmediatePropagation?.();
+      if (event.shiftKey) {
+        if (!focusYearSelect()) focusDaySoon();
+      } else if (!focusMonthSelect()) {
+        focusDaySoon();
+      }
+      return;
+    }
+    const offset = offsets[event.key];
+    if (!Number.isInteger(offset)) return;
+    event.preventDefault();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+    setSelectedDate((prev) => {
+      const next = new Date(prev);
+      next.setDate(prev.getDate() + offset);
+      return clampDateToRange(next);
+    });
+    focusDaySoon();
+  }, [focusDaySoon, focusMonthSelect, focusYearSelect]);
+
+  const dayPickerProps = window.React.useMemo(() => ({ onDayKeyDown: handleDayKeyDown }), [handleDayKeyDown]);
+
+  const handleMonthKeyDown = window.React.useCallback((event) => {
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+    event.currentTarget?.blur?.();
+    if (event.shiftKey) {
+      focusDaySoon();
+    } else if (!focusYearSelect()) {
+      focusDaySoon();
+    }
+  }, [focusDaySoon, focusYearSelect]);
+
+  const handleYearKeyDown = window.React.useCallback((event) => {
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+    event.currentTarget?.blur?.();
+    if (event.shiftKey) {
+      if (!focusMonthSelect()) focusDaySoon();
+    } else {
+      focusDaySoon();
+    }
+  }, [focusDaySoon, focusMonthSelect]);
+
+  window.React.useEffect(() => {
+    const handler = (event) => {
+      if (!dialogRef.current) return;
+      const root = dialogRef.current;
+      if (!root.contains(event.target)) {
+        if (event.key === "Tab") {
+          event.preventDefault();
+          event.stopPropagation?.();
+          event.stopImmediatePropagation?.();
+          if (event.shiftKey) {
+            if (!focusYearSelect()) focusDaySoon();
+          } else if (!focusMonthSelect()) {
+            focusDaySoon();
+          }
+          return;
+        }
+        const offsets = {
+          ArrowLeft: -1,
+          ArrowRight: 1,
+          ArrowUp: -7,
+          ArrowDown: 7,
+        };
+        const offset = offsets[event.key];
+        if (Number.isInteger(offset)) {
+          event.preventDefault();
+          event.stopPropagation?.();
+          event.stopImmediatePropagation?.();
+          setSelectedDate((prev) => {
+            const next = new Date(prev);
+            next.setDate(prev.getDate() + offset);
+            return clampDateToRange(next);
+          });
+          focusDaySoon();
+        }
+      }
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, [focusDaySoon, focusMonthSelect, focusYearSelect]);
+
   return window.React.createElement(
     window.Blueprint.Core.Dialog,
     {
@@ -65,19 +286,87 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
     },
     window.React.createElement(
       "div",
-      { className: window.Blueprint.Core.Classes.DIALOG_BODY },
+      { className: window.Blueprint.Core.Classes.DIALOG_BODY, ref: dialogRef },
       window.React.createElement(
-        window.Blueprint.Core.Label,
-        {},
-        window.React.createElement(window.Blueprint.DateTime.DatePicker, {
-          onChange,
-          maxDate: MAX,
-          minDate: MIN,
-          highlightCurrentDay: true,
-          popoverProps: { minimal: true, captureDismiss: true },
-          value: selectedDate,
-          canClearSelection: false,
-        })
+        "div",
+        { className: "teleport-calendar-wrapper" },
+        window.React.createElement(
+          "div",
+          { className: "teleport-calendar-controls" },
+          window.React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "teleport-calendar-nav",
+              tabIndex: -1,
+              disabled: prevMonthDisabled,
+              onClick: goPrevMonth,
+              "aria-label": "Previous month",
+            },
+            "‹"
+          ),
+          window.React.createElement(
+            "label",
+            {},
+            "Month",
+            window.React.createElement(
+              "select",
+              {
+                ref: monthSelectRef,
+                value: monthValue,
+                onChange: handleMonthChange,
+                onKeyDown: handleMonthKeyDown,
+              },
+              MONTH_NAMES.map((name, index) =>
+                window.React.createElement("option", { key: name, value: String(index) }, name)
+              )
+            )
+          ),
+          window.React.createElement(
+            "label",
+            {},
+            "Year",
+            window.React.createElement(
+              "select",
+              {
+                ref: yearSelectRef,
+                value: yearValue,
+                onChange: handleYearChange,
+                onKeyDown: handleYearKeyDown,
+                disabled: years.length <= 1,
+              },
+              years.map((year) =>
+                window.React.createElement("option", { key: year, value: String(year) }, String(year))
+              )
+            )
+          ),
+          window.React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "teleport-calendar-nav",
+              tabIndex: -1,
+              disabled: nextMonthDisabled,
+              onClick: goNextMonth,
+              "aria-label": "Next month",
+            },
+            "›"
+          )
+        ),
+        window.React.createElement(
+          "div",
+          { className: "teleport-datepicker-hide-caption", ref: calendarRef },
+            window.React.createElement(window.Blueprint.DateTime.DatePicker, {
+              onChange,
+              maxDate: MAX,
+              minDate: MIN,
+              highlightCurrentDay: true,
+            popoverProps: { minimal: true, captureDismiss: true },
+            value: selectedDate,
+            canClearSelection: false,
+            dayPickerProps,
+          })
+        )
       )
     )
   );
@@ -291,14 +580,30 @@ async function teleport(e, blockref, tag) {
 }
 
 // ---- Helpers ----
+function daysInMonth(year, monthIndex) {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function clampDateToRange(date) {
+  if (date < MIN) return new Date(MIN);
+  if (date > MAX) return new Date(MAX);
+  return date;
+}
+
+function withYearMonth(base, year, monthIndex) {
+  const safeDay = Math.min(base.getDate(), daysInMonth(year, monthIndex));
+  const next = new Date(base);
+  next.setFullYear(year, monthIndex, safeDay);
+  return clampDateToRange(next);
+}
+
 function convertToRoamDate(dateString) {
   const [mm, dd, year] = dateString.split("-");
   const month = Number(mm);
-  const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   const day = Number(dd);
   const suffix = (day >= 4 && day <= 20) || (day >= 24 && day <= 30)
     ? "th" : ["st", "nd", "rd"][day % 10 - 1];
-  return `${months[month - 1]} ${day}${suffix}, ${year}`;
+  return `${MONTH_NAMES[month - 1]} ${day}${suffix}, ${year}`;
 }
 
 async function sleep(ms) {
