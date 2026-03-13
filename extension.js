@@ -6,6 +6,8 @@ const MONTH_NAMES = [
   "January","February","March","April","May","June","July","August","September","October","November","December"
 ];
 
+let teleportInFlight = false;
+
 function parseColor(value) {
   if (!value) return [31, 41, 51];
   const ctx = value.trim();
@@ -120,8 +122,9 @@ const FormDialog = ({ onSubmit, title, onClose }) => {
 
   const focusDaySoon = window.React.useCallback(() => {
     let cancelled = false;
+    let attempts = 0;
     const tick = () => {
-      if (cancelled) return;
+      if (cancelled || attempts++ > 60) return;
       if (focusSelectedDay()) return;
       window.requestAnimationFrame(tick);
     };
@@ -577,17 +580,193 @@ export default {
       label: "Teleport TODO date tag",
       callback: (e) => teleport(e, false, true),
     });
+
+    window.RoamExtensionTools = window.RoamExtensionTools || {};
+    window.RoamExtensionTools["todo-teleport"] = {
+      name: "Todo Teleport",
+      version: "1.0",
+      tools: [
+        {
+          name: "tt_move_todos",
+          description: "Move {{[[TODO]]}} blocks to a target daily page. Only blocks containing {{[[TODO]]}} are moved; others are skipped. Optionally leave block references at the original locations.",
+          readOnly: false,
+          parameters: {
+            type: "object",
+            properties: {
+              block_uids: {
+                type: "array",
+                items: { type: "string" },
+                description: "UIDs of blocks to teleport.",
+              },
+              target_date: {
+                type: "string",
+                description: "Target date in YYYY-MM-DD format (e.g. \"2026-02-24\").",
+              },
+              leave_blockref: {
+                type: "boolean",
+                description: "If true, leave a block reference at each block's original location. Default false.",
+              },
+            },
+            required: ["block_uids", "target_date"],
+          },
+          execute: async ({ block_uids, target_date, leave_blockref } = {}) => {
+            if (!Array.isArray(block_uids) || block_uids.length === 0 || !block_uids.every(u => typeof u === "string")) {
+              return { error: "block_uids must be a non-empty array of strings." };
+            }
+            if (block_uids.length > 100) {
+              return { error: "block_uids is limited to 100 blocks per call." };
+            }
+            const parsed = parseISODate(target_date);
+            if (!parsed) return { error: "target_date must be a valid date in YYYY-MM-DD format." };
+            if (teleportInFlight) return { error: "A teleport operation is already in progress." };
+            teleportInFlight = true;
+            try {
+              const mode = leave_blockref ? "blockref" : "move";
+              return await teleportCore(block_uids, parsed.newDate, parsed.titleDate, mode);
+            } catch (e) {
+              return { error: e.message || "tt_move_todos failed" };
+            } finally {
+              teleportInFlight = false;
+            }
+          },
+        },
+        {
+          name: "tt_replace_date_tag",
+          description: "Replace the Roam date tag in {{[[TODO]]}} blocks with a new date. Only updates blocks that contain both {{[[TODO]]}} and an existing date tag (e.g. [[February 24th, 2026]]). Blocks are not moved.",
+          readOnly: false,
+          parameters: {
+            type: "object",
+            properties: {
+              block_uids: {
+                type: "array",
+                items: { type: "string" },
+                description: "UIDs of blocks whose date tags to replace.",
+              },
+              target_date: {
+                type: "string",
+                description: "New date in YYYY-MM-DD format (e.g. \"2026-02-24\").",
+              },
+            },
+            required: ["block_uids", "target_date"],
+          },
+          execute: async ({ block_uids, target_date } = {}) => {
+            if (!Array.isArray(block_uids) || block_uids.length === 0 || !block_uids.every(u => typeof u === "string")) {
+              return { error: "block_uids must be a non-empty array of strings." };
+            }
+            if (block_uids.length > 100) {
+              return { error: "block_uids is limited to 100 blocks per call." };
+            }
+            const parsed = parseISODate(target_date);
+            if (!parsed) return { error: "target_date must be a valid date in YYYY-MM-DD format." };
+            if (teleportInFlight) return { error: "A teleport operation is already in progress." };
+            teleportInFlight = true;
+            try {
+              return await teleportCore(block_uids, parsed.newDate, parsed.titleDate, "tag");
+            } catch (e) {
+              return { error: e.message || "tt_replace_date_tag failed" };
+            } finally {
+              teleportInFlight = false;
+            }
+          },
+        },
+      ],
+    };
   },
   onunload: () => {
     window.roamAlphaAPI.ui.blockContextMenu.removeCommand({ label: "Teleport TODOs" });
     window.roamAlphaAPI.ui.blockContextMenu.removeCommand({ label: "Teleport TODOs and leave blockref behind" });
     window.roamAlphaAPI.ui.blockContextMenu.removeCommand({ label: "Teleport TODO date tag" });
+    delete window.RoamExtensionTools?.["todo-teleport"];
+    document.getElementById("teleport-dialog-styles")?.remove();
+    window.__teleportPromptOpen = false;
   },
 };
 
-async function teleport(e, blockref, tag) {
+async function teleportCore(blockUids, newDate, titleDate, mode) {
   const regexTODO = /(\{\{\[\[TODO\]\]\}\})/i;
-  
+
+  if (mode === "tag") {
+    const items = [];
+    for (let i = 0; i < blockUids.length; i++) {
+      const uid = blockUids[i];
+      const info = await window.roamAlphaAPI.data.pull(
+        "[:block/uid :block/string]",
+        [":block/uid", uid]
+      );
+      if (!info) continue;
+      const text = String(info[":block/string"] || "");
+      if (regexTODO.test(text)) items.push({ uid, text });
+    }
+
+    if (items.length === 0) {
+      return { error: "No blocks contained {{[[TODO]]}}." };
+    }
+
+    const longMonth =
+      /\[\[(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{1,2}(?:st|nd|rd|th),\s\d{4}\]\]/;
+
+    const processed = [];
+    for (let j = 0; j < items.length; j++) {
+      const src = items[j].text;
+      if (!longMonth.test(src)) continue;
+      const replaced = src.replace(longMonth, `[[${titleDate}]]`);
+      await sleep(50);
+      await window.roamAlphaAPI.updateBlock({"block": {"uid": items[j].uid, "string": replaced}});
+      processed.push(items[j].uid);
+    }
+
+    return { success: true, processed: processed.length, skipped: items.length - processed.length, blocks: processed };
+  }
+
+  const page = await window.roamAlphaAPI.q(
+    `[:find (pull ?e [:node/title]) :where [?e :block/uid "${newDate}"]]`
+  );
+  if (!(page.length > 0 && page[0][0] != null)) {
+    await window.roamAlphaAPI.createPage({ page: { title: titleDate, uid: newDate } });
+  }
+
+  const todoBlocks = [];
+  for (let i = 0; i < blockUids.length; i++) {
+    const uid = blockUids[i];
+    const info = await window.roamAlphaAPI.data.pull(
+      "[:block/uid :block/string :block/order {:block/parents [:block/uid]}]",
+      [":block/uid", uid]
+    );
+    if (!info) continue;
+
+    const text = String(info[":block/string"] || "");
+    if (!regexTODO.test(text)) continue;
+
+    const order = info[":block/order"] ?? 0;
+    const parents = (info[":block/parents"] || []);
+    const directParent = parents.length ? parents[parents.length - 1][":block/uid"] : null;
+
+    todoBlocks.push({ uid, text, order, parent: directParent });
+  }
+
+  if (todoBlocks.length === 0) {
+    return { error: "No blocks contained {{[[TODO]]}}." };
+  }
+
+  for (let j = 0; j < todoBlocks.length; j++) {
+    await window.roamAlphaAPI.moveBlock({
+      location: { "parent-uid": newDate, order: j },
+      block: { uid: String(todoBlocks[j].uid) },
+    });
+
+    if (mode === "blockref" && todoBlocks[j].parent) {
+      await window.roamAlphaAPI.createBlock({
+        location: { "parent-uid": todoBlocks[j].parent, order: todoBlocks[j].order },
+        block: { string: `((${String(todoBlocks[j].uid)}))` },
+      });
+    }
+    await sleep(25);
+  }
+
+  return { success: true, processed: todoBlocks.length, skipped: blockUids.length - todoBlocks.length, blocks: todoBlocks.map(b => b.uid) };
+}
+
+async function teleport(e, blockref, tag) {
   const multiselectUids =
     (await roamAlphaAPI.ui.individualMultiselect.getSelectedUids?.()) || [];
 
@@ -608,101 +787,24 @@ async function teleport(e, blockref, tag) {
     }
   }
   if (candidateUids.length === 0) return;
-  
+
   const selectedDate = await prompt({ title: "To which date?" });
   if (!selectedDate || !(selectedDate instanceof Date)) return;
-  
+
   const year = selectedDate.getFullYear();
   const dd = String(selectedDate.getDate()).padStart(2, "0");
   const mm = String(selectedDate.getMonth() + 1).padStart(2, "0");
   const newDate = `${mm}-${dd}-${year}`;
   const titleDate = convertToRoamDate(newDate);
-  
-  if (!tag) {
-    const page = await window.roamAlphaAPI.q(
-      `[:find (pull ?e [:node/title]) :where [?e :block/uid "${newDate}"]]`
-    );
-    if (!(page.length > 0 && page[0][0] != null)) {
-      await window.roamAlphaAPI.createPage({ page: { title: titleDate, uid: newDate } });
-    }
-  }
-  
-  if (tag) {
-    const items = [];
-    for (let i = 0; i < candidateUids.length; i++) {
-      const uid = candidateUids[i];
-      const info = await window.roamAlphaAPI.data.pull(
-        "[:block/uid :block/string]",
-        [":block/uid", uid]
-      );
-      if (!info) continue;
-      const text = String(info[":block/string"] || "");
-      if (regexTODO.test(text)) items.push({ uid, text });
-    }
 
-    if (items.length === 0) {
-      alert("No selected blocks contained {{[[TODO]]}}.");
-      return;
-    }
+  const mode = tag ? "tag" : (blockref ? "blockref" : "move");
+  const result = await teleportCore(candidateUids, newDate, titleDate, mode);
 
-    const longMonth =
-      /\[\[(?:January|February|March|April|May|June|July|August|September|October|November|December)\s\d{1,2}(?:st|nd|rd|th),\s\d{4}\]\]/;
-
-    for (let j = 0; j < items.length; j++) {
-      const src = items[j].text;
-      if (!longMonth.test(src)) continue;
-      const replaced = src.replace(longMonth, `[[${titleDate}]]`);
-      await sleep(50);
-      await window.roamAlphaAPI.updateBlock({"block": {"uid": items[j].uid, "string": replaced}});
-    }
-    
+  if (result.error) {
+    alert(result.error);
     return;
   }
-  
-  const todoBlocks = [];
-  for (let i = 0; i < candidateUids.length; i++) {
-    const uid = candidateUids[i];
-    const info = await window.roamAlphaAPI.data.pull(
-      "[:block/uid :block/string :block/order {:block/parents [:block/uid]}]",
-      [":block/uid", uid]
-    );
-    if (!info) continue;
 
-    const text = String(info[":block/string"] || "");
-    if (!regexTODO.test(text)) continue;
-
-    const order = info[":block/order"] ?? 0;
-    const parents = (info[":block/parents"] || []);
-    const directParent = parents.length ? parents[parents.length - 1][":block/uid"] : null;
-
-    todoBlocks.push({
-      uid,
-      text,
-      order,
-      parent: directParent,
-    });
-  }
-
-  if (todoBlocks.length === 0) {
-    alert("No selected blocks contained {{[[TODO]]}}.");
-    return;
-  }
-  
-  for (let j = 0; j < todoBlocks.length; j++) {
-    await window.roamAlphaAPI.moveBlock({
-      location: { "parent-uid": newDate, order: j },
-      block: { uid: String(todoBlocks[j].uid) },
-    });
-
-    if (blockref && todoBlocks[j].parent) {
-      await window.roamAlphaAPI.createBlock({
-        location: { "parent-uid": todoBlocks[j].parent, order: todoBlocks[j].order },
-        block: { string: `((${String(todoBlocks[j].uid)}))` },
-      });
-    }
-    await sleep(25);
-  }
-  
   if (multiselectUids.length !== 0) {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "m", keyCode: 77, code: "KeyM", which: 77, ctrlKey: true }));
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "m", keyCode: 77, code: "KeyM", which: 77, ctrlKey: true }));
@@ -734,6 +836,16 @@ function convertToRoamDate(dateString) {
   const suffix = (day >= 4 && day <= 20) || (day >= 24 && day <= 30)
     ? "th" : ["st", "nd", "rd"][day % 10 - 1];
   return `${MONTH_NAMES[month - 1]} ${day}${suffix}, ${year}`;
+}
+
+function parseISODate(isoString) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoString);
+  if (!match) return null;
+  const [, y, m, d] = match;
+  const probe = new Date(Number(y), Number(m) - 1, Number(d));
+  if (probe.getFullYear() !== Number(y) || probe.getMonth() !== Number(m) - 1 || probe.getDate() !== Number(d)) return null;
+  const newDate = `${m}-${d}-${y}`;
+  return { newDate, titleDate: convertToRoamDate(newDate) };
 }
 
 async function sleep(ms) {
